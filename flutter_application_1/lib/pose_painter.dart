@@ -67,6 +67,7 @@ class PosePainter extends CustomPainter {
     drawLine(PoseLandmarkType.leftHip, PoseLandmarkType.leftKnee);
     drawLine(PoseLandmarkType.leftKnee, PoseLandmarkType.leftAnkle);
     drawLine(PoseLandmarkType.rightHip, PoseLandmarkType.rightKnee);
+    drawLine(PoseLandmarkType.rightKnee, PoseLandmarkType.rightAnkle);
   }
 
   @override
