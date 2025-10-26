@@ -1,0 +1,254 @@
+import 'dart:async';
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_application_1/algorithms/comparing_templates/landmarks_comparator.dart';
+import 'package:flutter_application_1/algorithms/comparing_templates/landmarks_equalizer.dart';
+import 'package:flutter_application_1/algorithms/exercise_tracker/exercise_tracker.dart';
+import 'package:flutter_application_1/algorithms/landmarks_modifier/landmarks_modifier.dart';
+import 'package:flutter_application_1/algorithms/landmarks_normalizer/normalizer.dart';
+import 'package:flutter_application_1/algorithms/models/trainer_template.dart';
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'algorithms/models/frame.dart';
+import 'pose_painter.dart';
+
+// This example of using algorithms. It counts repetitions for exercise jumpingjacks
+Future<void> main() async {
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
+    // Get a list of the available cameras on the device.
+    final cameras = await availableCameras();
+
+    // If no cameras are found, display a message and exit.
+    if (cameras.isEmpty) {
+      print("Error:No camera found in the Device");
+      runApp(
+        const MaterialApp(
+          home: Scaffold(body: Center(child: Text("No camera found!"))),
+        ),
+      );
+      return;
+    }
+
+    // Get the first camera from the list (usually the rear camera).
+    final firstCamera = cameras.first;
+
+    // Run the app, passing the selected camera to the main screen.
+    runApp(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        debugShowCheckedModeBanner: false,
+        home: CameraScreen(camera: firstCamera),
+      ),
+    );
+  } catch (e) {
+    // Catch any errors that might occur during start.
+    print("Error at the start: $e");
+  }
+}
+
+// A stateful widget that displays the camera feed
+class CameraScreen extends StatefulWidget {
+  final CameraDescription camera;
+
+  const CameraScreen({Key? key, required this.camera}) : super(key: key);
+
+  @override
+  State<CameraScreen> createState() => CameraScreenState();
+}
+
+// The state class for the CameraScreen widget, managing the camera and pose detection logic.
+class CameraScreenState extends State<CameraScreen> {
+  // Controller to manage the camera.
+  late CameraController _controller;
+  // Flag to check if the camera is initialized.
+  bool _isCameraInitialized = false;
+  // The pose detector instance from Google ML Kit.
+  late PoseDetector _poseDetector;
+  // The pose detected in the latest frame.
+  Pose? _detectedPose;
+
+  // Test algorithms
+  late final LandmarksModifier lm;
+  late final Normalizer norm;
+  late final TrainerTemplate trainer;
+  late final ExerciseTracker tracker;
+
+  // This method is called once when the widget is first created.
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    // Initialize camera & detector (async)
+    _initializeCameraAndDetector();
+
+    // Then initialize other objects
+    lm = LandmarksModifier(exerciseName: "jumpingjacks");
+    norm = Normalizer();
+    trainer = await TrainerTemplate.fromMetadata("jumpingjacks");
+    tracker = ExerciseTracker(trainer.startTemplate);
+
+    // Update UI after everything is ready
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  // Initializes both the camera controller and the pose detector.
+  void _initializeCameraAndDetector() async {
+    try {
+      // Initialize the pose detector with base model options.
+      final options = PoseDetectorOptions(model: PoseDetectionModel.base);
+      _poseDetector = PoseDetector(options: options);
+
+      // Initialize the camera controller.
+      _controller = CameraController(
+        widget.camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
+      await _controller.initialize();
+
+      // Start streaming images from the camera. (Start streaming images from the camera.)
+      _controller.startImageStream((CameraImage image) {
+        _processImage(image);
+      });
+
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = true;
+        });
+      }
+    } catch (e, stackTrace) {
+      // Catch and print any errors during initialization.
+      print("Error: $e");
+      print("Error Description: $stackTrace");
+    }
+  }
+
+  // Processes each CameraImage frame to detect poses.
+  Future<void> _processImage(CameraImage cameraImage) async {
+    // For android tablet
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final plane in cameraImage.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    // For android tablet
+    final inputImage = InputImage.fromBytes(
+      bytes: bytes,
+      metadata: InputImageMetadata(
+        size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+        rotation: InputImageRotation.rotation90deg,
+        format: InputImageFormat.nv21,
+        bytesPerRow: cameraImage.planes.first.bytesPerRow,
+      ),
+    );
+
+    // Send the image to the pose detector for processing.
+    final List<Pose> poses = await _poseDetector.processImage(inputImage);
+    if (poses.isEmpty) return;
+
+    final pose = poses.first;
+
+    // - - - ALGORITHMS - - -
+    Frame frame = Frame.fromMlkitPose(pose, 0);
+
+    lm.prepareFrame(frame);
+
+    // TODO: figure out how to implement smoothing (it requires min 2 frames)
+    // lm.smoothPreparedFrames();
+    
+    lm.estimateZPreparedFrames();
+    lm.commitPreparedFrames();
+
+    norm.prepareFrame(lm.frames.last);
+    norm.storeVectors([lm.frames.last]);
+    norm.normalizePreparedFrames(targetDistance: 0.1);
+    norm.commitPreparedFrames();
+
+    LandmarksEqualizer equalizer = LandmarksEqualizer(
+      trainer,
+      norm.frames.last.landmarks,
+    );
+    var processed = equalizer.getProcessedLandmarks();
+
+    final res = getMostAccuratePoseAndError(equalizer.template, processed);
+    final currentPosename = res.poseName;
+
+    tracker.processPose(currentPosename);
+
+    // If a pose is detected, update the state to trigger a repaint with the new pose.
+    if (mounted) {
+      setState(() {
+        _detectedPose = poses.first;
+        
+        // Shows current pose
+        debugPrint(currentPosename);
+      });
+    }
+  }
+
+  // This method is called when the widget is permanently removed from the widget tree.
+  @override
+  void dispose() {
+    _controller.dispose();
+    _poseDetector.close();
+    super.dispose();
+  }
+
+  // Builds the UI for the screen.
+  @override
+  Widget build(BuildContext context) {
+    if (!_isCameraInitialized) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    // Once initialized, build the main UI.
+    return Scaffold(
+      body: Stack(
+        // Use a Stack to overlay the painter on top of the camera preview.
+        fit: StackFit.expand,
+        children: [
+          // Layer 1: The live camera feed.
+          CameraPreview(_controller),
+          // Layer 2: The custom painter, only shown if a pose has been detected.
+          if (_detectedPose != null)
+            CustomPaint(
+              painter: PosePainter(
+                pose: _detectedPose!,
+                imageSize: Size(
+                  _controller.value.previewSize!.height,
+                  _controller.value.previewSize!.width,
+                ),
+              ),
+            ),
+          ?_detectedPose != null ? CountReps(count: tracker.repitions) : null,
+        ],
+      ),
+    );
+  }
+}
+
+
+class CountReps extends StatelessWidget {
+
+  final int count;
+  const CountReps({required this.count, super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Text(
+        '$count',
+        style: const TextStyle(fontSize: 48, color: Colors.white),
+      ),
+    );
+  }
+
+}
