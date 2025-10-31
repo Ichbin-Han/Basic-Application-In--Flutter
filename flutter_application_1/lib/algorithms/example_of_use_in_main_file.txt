@@ -9,8 +9,9 @@ import 'package:flutter_application_1/algorithms/landmarks_modifier/landmarks_mo
 import 'package:flutter_application_1/algorithms/landmarks_normalizer/normalizer.dart';
 import 'package:flutter_application_1/algorithms/models/trainer_template.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
-import 'algorithms/models/frame.dart';
 import 'pose_painter.dart';
+import './algorithms/models/landmark.dart';
+import './algorithms/feedback/feedback.dart';
 
 // This example of using algorithms. It counts repetitions for exercise jumpingjacks
 Future<void> main() async {
@@ -31,7 +32,11 @@ Future<void> main() async {
     }
 
     // Get the first camera from the list (usually the rear camera).
-    final firstCamera = cameras.first;
+    final firstCamera = cameras
+      .firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => cameras.first,
+      );
 
     // Run the app, passing the selected camera to the main screen.
     runApp(
@@ -129,6 +134,8 @@ class CameraScreenState extends State<CameraScreen> {
     }
   }
 
+  List<Landmark>? previousLandmarks;
+
   // Processes each CameraImage frame to detect poses.
   Future<void> _processImage(CameraImage cameraImage) async {
     // For android tablet
@@ -155,40 +162,54 @@ class CameraScreenState extends State<CameraScreen> {
 
     final pose = poses.first;
 
-    // - - - ALGORITHMS - - -
-    Frame frame = Frame.fromMlkitPose(pose, 0);
+    // Converting to Landmark
+    var currentLandmarks = pose.landmarks.values
+        .map((l) => Landmark.fromMlkitPoseLandmarks(l))
+        .toList();
 
-    lm.prepareFrame(frame);
+    // Checking if previous is not null for smoothing
+    if (previousLandmarks != null) {
+      currentLandmarks = LandmarksModifier.getSmoothed(
+        currentLandmarks,
+        previousLandmarks!,
+      );
+    }
 
-    // TODO: figure out how to implement smoothing (it requires min 2 frames)
-    // lm.smoothPreparedFrames();
-    
-    lm.estimateZPreparedFrames();
-    lm.commitPreparedFrames();
+    // Z estimate
+    currentLandmarks = LandmarksModifier.getZEstimated(currentLandmarks);
 
-    norm.prepareFrame(lm.frames.last);
-    norm.storeVectors([lm.frames.last]);
-    norm.normalizePreparedFrames(targetDistance: 0.1);
-    norm.commitPreparedFrames();
+    // Previous landmarks for future
+    previousLandmarks = currentLandmarks.map((l) => l.copyWith()).toList();
 
+    // Normalize
+    currentLandmarks = LandmarksModifier.getNormalized(currentLandmarks);
+
+    // Init class for equating current landmarks with trainer's landmarks
     LandmarksEqualizer equalizer = LandmarksEqualizer(
       trainer,
-      norm.frames.last.landmarks,
+      currentLandmarks,
     );
+    // Equate these landmarks
     var processed = equalizer.getProcessedLandmarks();
 
+    // Get most accurate pose and his list of errors
     final res = getMostAccuratePoseAndError(equalizer.template, processed);
     final currentPosename = res.poseName;
 
+    // Gather hints
+    final hints = analyzeLandmarks(res.error);
+
+    // Track this pose stage for counting reps
     tracker.processPose(currentPosename);
 
     // If a pose is detected, update the state to trigger a repaint with the new pose.
     if (mounted) {
       setState(() {
         _detectedPose = poses.first;
-        
+
         // Shows current pose
-        debugPrint(currentPosename);
+        debugPrint("Current pose is $currentPosename");
+        debugPrint("Hints are $hints");
       });
     }
   }
@@ -234,9 +255,7 @@ class CameraScreenState extends State<CameraScreen> {
   }
 }
 
-
 class CountReps extends StatelessWidget {
-
   final int count;
   const CountReps({required this.count, super.key});
 
@@ -250,5 +269,4 @@ class CountReps extends StatelessWidget {
       ),
     );
   }
-
 }

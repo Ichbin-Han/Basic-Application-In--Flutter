@@ -1,3 +1,5 @@
+import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+
 class Landmark {
   final int index;
   final String name;
@@ -11,6 +13,15 @@ class Landmark {
     required this.z,
     required this.visibility,
   });
+
+  factory Landmark.fromMlkitPoseLandmarks(PoseLandmark landmark) => Landmark(
+    index: landmark.type.index,
+    name: landmark.type.name,
+    x: landmark.x,
+    y: landmark.y,
+    z: landmark.z,
+    visibility: landmark.likelihood,
+  );
 
   Landmark copyWith({
     int? index,

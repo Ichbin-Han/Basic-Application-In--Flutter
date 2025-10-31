@@ -4,29 +4,50 @@ import '../models/body_parts.dart';
 import '../models/pose_error.dart';
 import 'dart:math';
 
-
 /// Returns map
 /// that contains [BodyParts] as key and list of [error_x, error_y, error_z] as value.
 ///
 /// Compares first list with second and returns error
 Map<BodyParts, List<double>> determineError(
-  List<Landmark> firstLandmark,
-  List<Landmark> secondLandmark,
-) {
+  List<Landmark> testLandmark,
+  List<Landmark> trueLandmark, {
+  bool inPercentage = false,
+}) {
   Map<BodyParts, List<double>> map = {};
 
-  if (firstLandmark.length != secondLandmark.length) {
+  if (testLandmark.length != trueLandmark.length) {
     throw Exception("Different length");
   }
 
-  var len = firstLandmark.length;
+  var len = testLandmark.length;
   for (var i = 0; i < len; i++) {
-    BodyParts part = BodyParts.values[firstLandmark[i].index];
-    map[part] = [
-      (secondLandmark[i].x - firstLandmark[i].x),
-      (secondLandmark[i].y - firstLandmark[i].y),
-      (secondLandmark[i].z - firstLandmark[i].z),
-    ];
+    BodyParts part = BodyParts.values[testLandmark[i].index];
+    if (inPercentage) {
+      // Checks whether second number is zero
+      double safeDivide(double a, double b) => b != 0 ? a / b : 0;
+
+      // In percentage
+      map[part] = [
+        // x_error
+        safeDivide(testLandmark[i].x - trueLandmark[i].x, trueLandmark[i].x) *
+            100,
+        // y_error
+        safeDivide(testLandmark[i].y - trueLandmark[i].y, trueLandmark[i].y) *
+            100,
+        // z_error
+        safeDivide(testLandmark[i].z - trueLandmark[i].z, trueLandmark[i].z) *
+            100,
+      ];
+    } else {
+      map[part] = [
+        // x_error
+        (testLandmark[i].x - trueLandmark[i].x),
+        // y_error
+        (testLandmark[i].y - trueLandmark[i].y),
+        // z_error
+        (testLandmark[i].z - trueLandmark[i].z),
+      ];
+    }
   }
 
   return map;
@@ -53,15 +74,16 @@ double sumError(Map<BodyParts, List<double>> mapError) {
 /// and its detailed error map (BodyParts → [errorX, errorY, errorZ]) as value.
 PoseError getMostAccuratePoseAndError(
   TrainerTemplate template,
-  Map<String, List<Landmark>> userLandmarks,
-) {
+  Map<String, List<Landmark>> userLandmarks, {
+  bool inPercentage = false,
+}) {
   final templateLandmarks = template.normPoseLandmarks;
   final Map<String, double> totalErrors = {};
 
   // Sum errors for each pose
   userLandmarks.forEach((poseName, userPoseLandmarks) {
     final totalError = sumError(
-      determineError(userPoseLandmarks, templateLandmarks[poseName]!),
+      determineError(userPoseLandmarks, templateLandmarks[poseName]!, inPercentage: inPercentage),
     );
     totalErrors[poseName] = totalError;
   });
@@ -79,4 +101,3 @@ PoseError getMostAccuratePoseAndError(
 
   return PoseError(bestPose, detailedError);
 }
-

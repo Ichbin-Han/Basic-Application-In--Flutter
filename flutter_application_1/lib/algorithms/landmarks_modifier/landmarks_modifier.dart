@@ -1,6 +1,8 @@
 import './data_smoothing/landmarks_smoother.dart';
 import './establishig_z/z_estimator.dart' as ze;
 import '../models/frame.dart';
+import '../models/landmark.dart';
+import '../landmarks_normalizer/normalizer.dart';
 
 /// Handles landmark processing pipeline: manual smoothing, Z-estimation, and normalization.
 ///
@@ -61,8 +63,7 @@ class LandmarksModifier {
     try {
       final smoothed = _landmarksSmoother.smooth(preparedFrames);
       preparedFrames
-        ..clear()
-        ..addAll(smoothed);
+        .addAll(smoothed);
     } catch (e) {
       return;
     }
@@ -100,4 +101,53 @@ class LandmarksModifier {
     );
     preparedFrames.clear();
   }
+
+  // - - - Static methods that return modified landmarks - - - 
+  
+  /// Returns list of normalized [Landmark]s
+  static List<Landmark> getNormalized(List<Landmark> landmarks) {
+    Normalizer normalizer = Normalizer();
+    normalizer.prepareFrame(
+      Frame(video: "", frameIndex: 0, timestampMs: 0, landmarks: landmarks),
+    );
+    normalizer.normalizePreparedFrames();
+    return normalizer.preparedFrames.last.landmarks;
+  }
+
+  /// Returns list of smoothed [Landmark]s
+  static List<Landmark> getSmoothed(
+    List<Landmark> currentLandmarks,
+    List<Landmark> previousLandmarks,
+  ) {
+    LandmarksModifier landmarksModifier = LandmarksModifier();
+    landmarksModifier.prepareFrame(
+      Frame(
+        video: "",
+        frameIndex: 0,
+        timestampMs: 0,
+        landmarks: previousLandmarks,
+      ),
+    );
+    landmarksModifier.prepareFrame(
+      Frame(
+        video: "",
+        frameIndex: 0,
+        timestampMs: 0,
+        landmarks: currentLandmarks,
+      ),
+    );
+    landmarksModifier.smoothPreparedFrames();
+    return landmarksModifier.preparedFrames.last.landmarks;
+  }
+
+  /// Returns list of z-estimated [Landmark]s
+  static List<Landmark> getZEstimated(List<Landmark> landmarks) {
+    LandmarksModifier landmarksModifier = LandmarksModifier();
+    landmarksModifier.prepareFrame(
+      Frame(video: "", frameIndex: 0, timestampMs: 0, landmarks: landmarks),
+    );
+    landmarksModifier.estimateZPreparedFrames();
+    return landmarksModifier.preparedFrames.last.landmarks;
+  }
+
 }
